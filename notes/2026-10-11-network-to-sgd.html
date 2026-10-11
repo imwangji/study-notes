@@ -1,0 +1,316 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>从 Network 到 SGD：两次学习录屏笔记</title><style>
+:root{color-scheme:light dark;--bg:light-dark(#f5f7f8,#11181c);--text:light-dark(#18242b,#e4eaed);--muted:light-dark(#5d6b74,#a9b8c1);--line:light-dark(#c5cfd5,#3d4a52);--accent:light-dark(#17698a,#6cc0e0);--code:light-dark(#e9eef1,#1e2a30)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:17px/1.85 system-ui,'Microsoft YaHei',sans-serif}main{max-width:880px;margin:auto;padding:32px 20px 80px}h1{font-size:32px;line-height:1.4}h2{margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:24px}a{color:var(--accent)}blockquote{margin:20px 0;padding-left:18px;border-left:3px solid var(--accent);color:var(--muted)}pre{padding:18px;background:var(--code);overflow:auto;border-radius:8px;font-size:14px;line-height:1.65}code{font-family:Consolas,monospace}p code,td code{background:var(--code);padding:2px 4px}img{display:block;max-width:100%;height:auto;margin:24px auto}table{border-collapse:collapse;width:100%;font-size:15px}th,td{padding:10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}.table-wrap{overflow:auto}nav{display:flex;flex-wrap:wrap;gap:20px}footer{margin-top:50px;color:var(--muted);font-size:14px}@media(max-width:550px){main{padding:24px 16px}h1{font-size:27px}h2{font-size:22px}}
+</style><script>window.MathJax={tex:{inlineMath:[['\\(','\\)']],displayMath:[['$$','$$']]}};</script><script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script></head><body><main><nav><a href="../index.html">← 全部笔记</a><a href="2026-10-11-network-to-sgd.md">Markdown 原稿</a></nav><h1 id="network-sgd">从 Network 到 SGD：两次神经网络学习录屏笔记</h1>
+<blockquote>
+<p>根据 <code>20261007-231328.mp4</code>（55 分 19 秒）和 <code>20261011-171723.mp4</code>（60 分 44 秒）整理。视频是自学过程，包含提问、尝试和中途误解。下文按知识顺序重组，并将画面中的误解明确更正；数值演算属于整理者补充，不冒充视频原话。时间点用于回看本地视频。</p>
+</blockquote>
+<p>课程来源：Michael Nielsen《Neural Networks and Deep Learning》，第 1.7 节 <a href="https://eng.libretexts.org/Bookshelves/Computer_Science/Applied_Programming/Neural_Networks_and_Deep_Learning_(Nielsen)/01%3A_Using_neural_nets_to_recognize_handwritten_digits/1.07%3A_Implementing_our_network_to_classify_digits">Implementing our network to classify digits</a>，第 1.8 节 <a href="https://eng.libretexts.org/Bookshelves/Computer_Science/Applied_Programming/Neural_Networks_and_Deep_Learning_(Nielsen)/01%3A_Using_neural_nets_to_recognize_handwritten_digits/1.08%3A_Toward_deep_learning">Toward deep learning</a>。</p>
+<h2 id="1">1. 两个视频连接起来讲了什么</h2>
+<p>第一段解决“网络怎样保存和计算”，第二段解决“网络怎样学习”。</p>
+<pre><code class="language-text">创建网络 → 保存每层的权重和偏置
+输入图片 → 前向传播 → 得到预测
+预测与正确答案比较 → 计算损失
+反向传播 → 算出每个参数的梯度
+小批次内累加、取平均 → 更新参数
+重复多轮 → 用测试集检查识别效果
+</code></pre>
+<p>不要把“计算预测”和“训练网络”混为一谈。<code>feedforward</code> 只计算输出；参数更新发生在 <code>update_mini_batch</code> 的最后两行。</p>
+<h2 id="2-network2-3-1">2. Network([2, 3, 1])：数字描述的是层大小</h2>
+<p><strong>第一段约 01:20–20:45。</strong> 这个列表表示输入层 2 个神经元、隐藏层 3 个、输出层 1 个，共三层。</p>
+<pre><code class="language-python">import random
+import numpy as np
+
+class Network(object):
+    def __init__(self, sizes):
+        self.num_layers = len(sizes)
+        self.sizes = sizes
+        self.biases = [np.random.randn(y, 1) for y in sizes[1:]]
+        self.weights = [np.random.randn(y, x)
+                        for x, y in zip(sizes[:-1], sizes[1:])]
+</code></pre>
+<p><code>self</code> 代表当前网络对象。<code>self.sizes</code> 是对象保存的属性，<code>sizes</code> 是传入的参数。输入层只接收数据，本节实现不给它配置偏置。</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>表达式</th>
+<th>对 [2, 3, 1] 的结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>len(sizes)</code></td>
+<td>3</td>
+</tr>
+<tr>
+<td><code>sizes[1:]</code></td>
+<td>[3, 1]</td>
+</tr>
+<tr>
+<td><code>sizes[:-1]</code></td>
+<td>[2, 3]</td>
+</tr>
+<tr>
+<td><code>list(zip(sizes[:-1], sizes[1:]))</code></td>
+<td>[(2, 3), (3, 1)]</td>
+</tr>
+</tbody>
+</table></div>
+<p><code>np.random.randn(y, x)</code> 创建 y 行、x 列的标准正态随机数组。Python 3 的 <code>zip</code> 返回迭代器，用 <code>list(...)</code> 才能直接展示配对后的列表。</p>
+<p><img alt="偏置的列向量结构，第一段 07:15" src="assets/neural-network-two-videos/20261007-231328-435.jpg" /></p>
+<h2 id="3-biases-weights">3. biases 和 weights 实际存了什么</h2>
+<p>它们都是列表，列表中的每个元素是一个 NumPy 数组。严格说是 <code>ndarray</code>，书里把表示数学矩阵的二维数组称作 matrix，不代表使用了 <code>np.matrix</code> 类型。</p>
+<p>以下都是用于说明结构的假数字：</p>
+<pre><code class="language-python">biases = [
+    np.array([[0.1], [0.2], [0.3]]),  # 隐藏层：3×1
+    np.array([[0.4]])                 # 输出层：1×1
+]
+weights = [
+    np.array([[0.1, 0.2],             # 输入层→隐藏层：3×2
+              [0.3, 0.4],
+              [0.5, 0.6]]),
+    np.array([[0.7, 0.8, 0.9]])       # 隐藏层→输出层：1×3
+]
+</code></pre>
+<p>权重矩阵的<strong>每一行对应一个接收方神经元，每一列对应一个来源神经元</strong>。2 个输入连接到 3 个隐藏神经元，共 6 条连接，存成 3×2，不是 2×3。</p>
+<p>数学下标 <code>w[j,k]</code> 的意思是：从前一层第 k 个神经元，到后一层第 j 个神经元的权重。<code>weights[0]</code> 对应第一组层间连接，<code>weights[1]</code> 对应第二组。</p>
+<p><img alt="两张权重矩阵的形状，第一段 14:45" src="assets/neural-network-two-videos/20261007-231328-885.jpg" /></p>
+<p><strong>视频更正：</strong> 录屏中曾按“每个输入保存自己发出的三个权重”画成两行三列。这种连接视角可以理解网络，但不符合原文实际数组布局。代码 <code>randn(y, x)</code> 和后面的矩阵乘法确定了正确形状。</p>
+<h2 id="4-z-sigmoid">4. z 与 sigmoid 是两步</h2>
+<p><strong>第一段约 22:00–36:45。</strong> 单个 sigmoid 神经元计算：</p>
+<p>$$z=\sum_k w_k x_k+b,\qquad a=\sigma(z)=\frac{1}{1+e^{-z}}.$$</p>
+<p><code>z</code> 是加权和<strong>加上偏置</strong>，<code>a</code> 才是激活函数后的输出。小写 σ 表示 sigmoid，Σ / ∑ 表示求和，两者不是同一个符号。</p>
+<pre><code class="language-python">def sigmoid(z):
+    return 1.0 / (1.0 + np.exp(-z))
+</code></pre>
+<p>为什么只有一个参数？因为输入、权重和偏置已经在外面算成了 z；这个函数只做最后的非线性转换。z 是数组时，NumPy 对各元素分别计算。</p>
+<p>视频中的一个算例可整理为：输入 (1, 0.5)，权重 (0.8, −0.2)，偏置 0.4，则加权和是 0.7，z=1.1，σ(z)≈0.7503。</p>
+<p><strong>补充区别：</strong> 感知器根据阈值给出 0/1；sigmoid 神经元给出连续的激活值。阈值 θ 可以通过 b=−θ 写进加权输入，但“阈值”和“偏置”的数值并不直接相等。</p>
+<p><img alt="加权输入与 sigmoid，第一段 36:15" src="assets/neural-network-two-videos/20261007-231328-2175.jpg" /></p>
+<h2 id="5-feedforwarda">5. feedforward：逐层计算，a 被覆盖</h2>
+<p><strong>第一段约 36:45–55:19。</strong></p>
+<pre><code class="language-python">def feedforward(self, a):
+    for b, w in zip(self.biases, self.weights):
+        a = sigmoid(np.dot(w, a) + b)
+    return a
+</code></pre>
+<p><code>zip</code> 配的是整张偏置数组和整张权重数组，不是它们内部的数字。第一轮取 <code>biases[0]</code>、<code>weights[0]</code>，第二轮取各自下标 1 的元素。</p>
+<p><strong>乘的是 w 与 a，不是 w 与 b。</strong> 执行顺序是先算 <code>np.dot(w, a)</code>，再加 b，最后算 sigmoid。</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>循环</th>
+<th>w</th>
+<th>旧 a</th>
+<th>b</th>
+<th>新 a</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第一轮</td>
+<td>3×2</td>
+<td>2×1 输入</td>
+<td>3×1</td>
+<td>3×1 隐藏层输出</td>
+</tr>
+<tr>
+<td>第二轮</td>
+<td>1×3</td>
+<td>3×1 隐藏层输出</td>
+<td>1×1</td>
+<td>1×1 最终输出</td>
+</tr>
+</tbody>
+</table></div>
+<p>用上一节假参数和输入 a=[[1],[2]]，第一次矩阵乘法：</p>
+<pre><code class="language-text">0.1×1 + 0.2×2 = 0.5
+0.3×1 + 0.4×2 = 1.1
+0.5×1 + 0.6×2 = 1.7
+</code></pre>
+<p>加偏置得到 z=[0.6,1.3,2.0]ᵀ，sigmoid 后约为 [0.645656,0.785835,0.880797]ᵀ。第二轮 z≈0.7×0.645656+0.8×0.785835+0.9×0.880797+0.4=2.273345，最终输出约为 [[0.906645]]。</p>
+<p><strong>更正与补充：</strong> <code>a = ...</code> 是赋值，a 每轮被下一层输出覆盖，不是在累加。输入应为 <code>(n,1)</code> 列向量；返回的是输出数组，输出层有一个神经元时也是 <code>(1,1)</code>。单个随机输出不自动等于可靠概率或分类答案。</p>
+<p><img alt="网络连接与逐层传递，第一段 53:15" src="assets/neural-network-two-videos/20261007-231328-3195.jpg" /></p>
+<h2 id="6-sgd">6. SGD：安排每一轮训练</h2>
+<p><strong>第二段约 00:30–19:30。</strong> SGD 在这里是小批次随机梯度下降。<code>epochs</code> 是学习完整训练集的轮数，<code>mini_batch_size</code> 是每批样本数，<code>eta</code> 是学习率。</p>
+<pre><code class="language-python">def SGD(self, training_data, epochs, mini_batch_size, eta,
+        test_data=None):
+    if test_data:
+        n_test = len(test_data)
+    n = len(training_data)
+    for j in range(epochs):
+        random.shuffle(training_data)
+        mini_batches = [
+            training_data[k:k+mini_batch_size]
+            for k in range(0, n, mini_batch_size)
+        ]
+        for mini_batch in mini_batches:
+            self.update_mini_batch(mini_batch, eta)
+        if test_data:
+            print(&quot;Epoch {0}: {1} / {2}&quot;.format(
+                j, self.evaluate(test_data), n_test))
+        else:
+            print(&quot;Epoch {0} complete&quot;.format(j))
+</code></pre>
+<p>上面保留原文算法，改用 Python 3 的 <code>range</code> 和 <code>print(...)</code>。</p>
+<p>以 6 个样本、每批 2 个为例，<code>range(0,6,2)</code> 产生起点 0、2、4，切片得到 <code>training_data[0:2]</code>、<code>[2:4]</code>、<code>[4:6]</code>。切片不包含结束位置。最后一批不足指定大小也会保留。</p>
+<p>每轮先打乱<strong>样本的顺序</strong>，图片和对应答案不会被拆散；处理完这一轮的全部批次后才评估。<code>Epoch 0</code> 是第一轮结束，不是尚未训练。</p>
+<p><strong>视频更正：</strong> 录屏口述多次使用“6 万张训练数据”。本节实际把官方 60,000 张训练图片分成 50,000 张用于训练和 10,000 张用于验证，另有 10,000 张测试图。每批 10 个时，本节一轮更新 5,000 次，而不是一次。</p>
+<h2 id="7-mini_batch-x-y">7. mini_batch 中的 x 和 y 从哪里来</h2>
+<p><strong>第二段约 26:00–29:30。</strong> <code>training_data</code> 原本就是样本对的列表：</p>
+<pre><code class="language-python">training_data = [(图片A, 答案A), (图片B, 答案B),
+                 (图片C, 答案C), (图片D, 答案D)]
+mini_batches = [
+    [(图片A, 答案A), (图片B, 答案B)],
+    [(图片C, 答案C), (图片D, 答案D)]
+]
+</code></pre>
+<p>这里只是结构示意，不是直接可运行的图片变量。分批没有改变样本结构，所以 <code>for x, y in mini_batch</code> 每次取出一个二元组，并把图片交给 x、答案交给 y。</p>
+<p>在 MNIST 中，x 是 <code>(784,1)</code> 的像素列向量，训练用 y 是 <code>(10,1)</code> 的答案向量。数字 2 的标签对应 <code>[0,0,1,0,0,0,0,0,0,0]ᵀ；测试集标签则是整数 2。这两种格式在</code>mnist_loader` 中有意区别。</p>
+<p>给图片确定正确标签叫标注；已经标注不等于网络已经训练。MNIST 提供现成标签，加载代码只是读取和转换格式。标签有误会把网络往错误目标推。</p>
+<h2 id="8-update_mini_batch">8. update_mini_batch：先累计梯度，再更新参数</h2>
+<p><strong>第二段约 19:30–40:30。</strong></p>
+<pre><code class="language-python">def update_mini_batch(self, mini_batch, eta):
+    nabla_b = [np.zeros(b.shape) for b in self.biases]
+    nabla_w = [np.zeros(w.shape) for w in self.weights]
+    for x, y in mini_batch:
+        delta_nabla_b, delta_nabla_w = self.backprop(x, y)
+        nabla_b = [nb+dnb for nb, dnb in zip(nabla_b, delta_nabla_b)]
+        nabla_w = [nw+dnw for nw, dnw in zip(nabla_w, delta_nabla_w)]
+    self.weights = [w-(eta/len(mini_batch))*nw
+                    for w, nw in zip(self.weights, nabla_w)]
+    self.biases = [b-(eta/len(mini_batch))*nb
+                   for b, nb in zip(self.biases, nabla_b)]
+</code></pre>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>步骤</th>
+<th>输入</th>
+<th>产出</th>
+<th>是否改变网络参数</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>np.zeros(...shape)</code></td>
+<td>各参数数组的形状</td>
+<td>同形状的零梯度累加器</td>
+<td>否</td>
+</tr>
+<tr>
+<td><code>backprop(x,y)</code></td>
+<td>单个样本和当前参数</td>
+<td>当前样本对各参数的梯度</td>
+<td>否</td>
+</tr>
+<tr>
+<td><code>nb+dnb</code>、<code>nw+dnw</code></td>
+<td>累计梯度和当前样本梯度</td>
+<td>新的梯度之和</td>
+<td>否</td>
+</tr>
+<tr>
+<td>最后两行</td>
+<td>旧参数、整批梯度、学习率</td>
+<td>新权重、新偏置</td>
+<td>是</td>
+</tr>
+</tbody>
+</table></div>
+<p><code>nabla</code> 对应 ∇，表示梯度。<code>delta_nabla_w</code> 是单个样本的权重梯度列表，<code>nabla_w</code> 是这批处理到当前位置时的梯度之和。每个数组元素对应一个参数的偏导数，形状和参数匹配。</p>
+<p><img alt="录屏中的 backprop 手写理解，第二段 33:00；其中“新偏置、新权重”需要更正为“偏置梯度、权重梯度”" src="assets/neural-network-two-videos/20261011-171723-1980.jpg" /></p>
+<p><strong>两个重要更正：</strong> 视频曾将零数组理解成“网络参数全清零”，并把 backprop 的输出记为“新偏置、新权重”。这都不符合代码。零数组是独立的梯度累加器；backprop 输出的是梯度。真正赋值给 <code>self.weights</code> 和 <code>self.biases</code> 的只有最后两行。</p>
+<p>设批大小 m，本节更新规则为：</p>
+<p>$$w_{\mathrm{new}}=w-\eta\frac1m\sum_{i=1}^{m}\nabla_w C_i,\qquad b_{\mathrm{new}}=b-\eta\frac1m\sum_{i=1}^{m}\nabla_b C_i.$$</p>
+<p>补充算例：旧权重 0.5，两个样本对它的梯度分别 0.4、0.2，学习率 0.1，那么梯度和 0.6，平均 0.3，更新后为 0.5−0.1×0.3=0.47。正梯度让参数减小，负梯度让参数增大；它表示局部变化率，不直接等于“离最小值的距离”。</p>
+<p><strong>同一批内所有样本的梯度基于同一套旧参数计算，整批结束才更新一次。</strong> 下一批使用更新后的参数。方法没有显式 <code>return</code>，返回 None，实际效果是网络参数改变。</p>
+<h2 id="9">9. 实际跑一次课程示例</h2>
+<p><strong>第二段后半段约 40:30 起。</strong> 课程示例加载数据后执行：</p>
+<pre><code class="language-python">training_data, validation_data, test_data = mnist_loader.load_data_wrapper()
+net = network.Network([784, 30, 10])
+net.SGD(training_data, 30, 10, 3.0, test_data=test_data)
+</code></pre>
+<p>输入 28×28=784 个像素，输出十个激活值，<code>evaluate</code> 用 <code>np.argmax</code> 选最大值的位置作为数字预测，然后和测试标签比较。sigmoid 输出不要求十个值加起来等于 1。</p>
+<p>约 46:30–48:00 还讨论了 <strong>hyperparameters（超参数）</strong>：隐藏层大小、训练轮数、批大小、学习率是人为选择的训练设置；权重和偏置是训练算法根据数据调整的模型参数。学习率符号是 η（eta），不是表示梯度的 ∇（nabla）。学习率过小可能进展缓慢，过大可能导致更新不稳定。本次学习率保持 3.0，没有调参寻找最优值。</p>
+<p>以下是本次学习会话已保存日志的实验记录，也对应第二段中的实际运行讨论：</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>隐藏层大小</th>
+<th>训练设置</th>
+<th>耗时</th>
+<th>最终测试准确率</th>
+<th>最高单轮</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>30</td>
+<td>30 轮，每批 10，η=3.0</td>
+<td>67.9 秒</td>
+<td>95.03%</td>
+<td>95.29%</td>
+</tr>
+<tr>
+<td>100</td>
+<td>30 轮，每批 10，η=3.0</td>
+<td>327.3 秒</td>
+<td>87.45%</td>
+<td>87.45%</td>
+</tr>
+</tbody>
+</table></div>
+<p>两次固定随机种子 42；计时包含每轮测试和最后一次额外评估，不含加载、初始化与保存。100 神经元这次耗时约 4.82 倍。每种规模只跑一次，不能据此判断更宽的网络通常更差。</p>
+<p>可能影响结果的因素包括随机初始化、学习率和训练难度。sigmoid 饱和导致梯度较小是一种待验证的解释，不能当成本次已经查明的原因；也没有依据直接断言过拟合。将隐藏神经元从 30 改为 100 是“加宽”，不是增加隐藏层数量的“加深”。</p>
+<h2 id="10">10. 走向深度学习：本节的直觉与边界</h2>
+<p><strong>第二段最后几分钟。</strong> 第 1.8 节用简单形状、眼睛鼻子、人脸的组合关系解释层次特征。多层网络可以从数据中学习更复杂的表示，不需要人工逐一指定权重。</p>
+<p>这个例子是直觉，不意味着每个神经元必定对应一个人类命名概念，也不是现实人脸检测系统的完整设计。现代模型延续了矩阵运算、非线性变换、损失和反向传播等基础，同时增加更复杂的结构和训练方法。</p>
+<p>原文关于“常用 5–10 层”的描述属于当时背景；当前模型不受这个数限制。知道网络的数学运算，与能解释训练后每一个具体行为，是两件不同的事。</p>
+<p><strong>视频更正与补充：</strong> “每层负责一种固定概念”只是直觉，不是 Transformer 的硬性设计规则；AI 研究远早于 2010 年代，也不能说当时没有 AI。人工神经网络受到生物神经系统启发，但这不等于模拟了人脑的全部机制。视频约 53:20 提出的“简单算法加优质数据总比复杂算法好”不能作为普遍定律；算法、数据、算力和任务需要共同比较。</p>
+<h2 id="11">11. 复习时最容易混淆的六组概念</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>不要混淆</th>
+<th>正确区别</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>z 与 a</td>
+<td>z=wa+b；a=σ(z)</td>
+</tr>
+<tr>
+<td>权重数组与梯度数组</td>
+<td>一个保存参数，一个保存参数对应的偏导数</td>
+</tr>
+<tr>
+<td><code>zip</code> 与 <code>dot</code></td>
+<td>zip 配对对象；dot 执行乘法求和</td>
+</tr>
+<tr>
+<td>正确标签与预测输出</td>
+<td>y 是数据提供的目标，预测由前向传播算出</td>
+</tr>
+<tr>
+<td>mini-batch 与 epoch</td>
+<td>一小批更新一次；一轮包含全部批次</td>
+</tr>
+<tr>
+<td>标注与训练</td>
+<td>标注给答案；训练根据答案调整参数</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="12">12. 自测</h2>
+<ol>
+<li><code>[784,30,10]</code> 的偏置数组形状是什么？权重数组呢？</li>
+<li>第一轮 <code>zip(self.biases,self.weights)</code> 会把偏置与权重做点积吗？</li>
+<li><code>backprop(x,y)</code> 返回新参数还是梯度？</li>
+<li>两个样本的梯度为 −0.2 和 0.6，旧权重 1，η=0.5，新权重是多少？</li>
+<li>一轮 50,000 个样本、每批 10 个，更新参数几次？</li>
+</ol>
+<p>答案：① 偏置 (30,1)、(10,1)，权重 (30,784)、(10,30)。② 不会，点积是 w 与 a。③ 梯度。④ 平均梯度 0.2，新权重 0.9。⑤ 5,000 次。</p>
+<h2 id="_1">整理说明</h2>
+<p>视频语音经本地自动识别，再结合抽取画面和课程代码校正。时间点是近似索引，不是逐字逐秒字幕。录屏中的学习误解已明确标记；截图保留手写推理痕迹，不应把截图中的所有文字当作最终结论。未上传原始视频和完整语音转录。</p><footer>整理发布：2026-10-11 · 原始视频保留在本地。</footer></main></body></html>

@@ -51,6 +51,11 @@ h2 { font: 600 22px/1.4 var(--display); margin: 0; text-wrap: balance; }
 <script>
 // 每新增一篇笔记，在最前面加一项
 const NOTES = [
+  { date: '2026-10-11', href: 'notes/2026-10-11-network-to-sgd.html',
+    title: '从 Network 到 SGD：两次学习录屏完整笔记',
+    summary: '贯通网络初始化、矩阵乘法、前向传播、训练数据与小批次梯度更新，附视频截图、误解更正与两次实跑记录。',
+    tags: ['神经网络', '两段视频 / 116 分钟', 'Python / NumPy', 'SGD', '实跑记录'] },
+
   { date: '2026-10-07', href: 'notes/2026-10-07-network-class.html',
     title: '读懂 Nielsen 的 Network 类',
     summary: '初始化时偏置和权重的形状从哪来，sigmoid 为什么只有一个参数，feedforward 的循环里 a 是怎么变的。',
